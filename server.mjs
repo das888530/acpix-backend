@@ -121,9 +121,28 @@ async function fetchVideoById(videoId) {
 app.get("/health", async (_req, res) => {
   try {
     await query("SELECT 1");
-    res.json({ ok: true, port, frontendOrigin });
+
+    res.json({
+      ok: true,
+      service: { status: "ok" },
+      database: {
+        type: isD1() ? "d1" : "postgres",
+        status: "connected",
+      },
+      port,
+      frontendOrigin,
+    });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" });
+    res.status(500).json({
+      ok: false,
+      service: { status: "unhealthy" },
+      database: {
+        type: isD1() ? "d1" : "postgres",
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown database error",
+      },
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 });
 
