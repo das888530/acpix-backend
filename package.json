@@ -1,0 +1,22 @@
+{
+  "name": "acpix-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.mjs",
+    "build": "node --check server.mjs",
+    "start": "node server.mjs",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio",
+    "prisma:validate": "prisma validate",
+    "admin:ensure": "node ensure-admin.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^16.5.0",
+    "express": "^5.2.1",
+    "pg": "^8.20.0",
+    "prisma": "^7.5.0"
+  }
+}

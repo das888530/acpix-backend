@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ContentType {
+  MOVIE
+  SERIES
+}
+
+enum SubscriptionStatus {
+  NONE
+  ACTIVE
+  CANCELED
+  PAST_DUE
+}
+
+model User {
+  id                 String               @id @default(cuid())
+  email              String               @unique
+  passwordHash       String?
+  role               Role                 @default(USER)
+  isSubscribed       Boolean              @default(false)
+  subscriptionStatus SubscriptionStatus   @default(NONE)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  uploadedVideos     Video[]              @relation("UploadedVideos")
+  subscriptions      Subscription[]
+}
+
+model Video {
+  id           String      @id @default(cuid())
+  title        String
+  description  String
+  genres       String[]
+  tags         String[]
+  thumbnailUrl String
+  videoUrl     String?
+  type         ContentType @default(MOVIE)
+  isFree       Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  publishedAt  DateTime?
+  uploadedById String?
+  uploadedBy   User?       @relation("UploadedVideos", fields: [uploadedById], references: [id], onDelete: SetNull)
+  episodes     Episode[]
+
+  @@index([type])
+  @@index([createdAt])
+}
+
+model Episode {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  videoUrl    String
+  order       Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, order])
+  @@index([videoId])
+}
+
+model Subscription {
+  id         String             @id @default(cuid())
+  planName   String
+  status     SubscriptionStatus @default(ACTIVE)
+  startedAt  DateTime           @default(now())
+  endsAt     DateTime?
+  canceledAt DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  userId     String
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
