@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getClient, isD1, query } from "./db.mjs";
 
 const app = express();
-const port = Number(process.env.BACKEND_PORT || 4000);
+const port = Number(process.env.BACKEND_PORT || 8080);
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:9002";
 const backendDir = dirname(fileURLToPath(import.meta.url));
 const uploadsDir = join(backendDir, "uploads");

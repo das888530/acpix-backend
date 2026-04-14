@@ -22,7 +22,7 @@ The backend reads:
 - `D1_ACCOUNT_ID` (for Cloudflare D1)
 - `D1_DATABASE_NAME` (for Cloudflare D1)
 - `CLOUDFLARE_API_TOKEN` (for Cloudflare D1)
-- `BACKEND_PORT`
+- `BACKEND_PORT` (default: `8080`)
 - `FRONTEND_ORIGIN`
 
 If `D1_ACCOUNT_ID`, `D1_DATABASE_NAME`, and `CLOUDFLARE_API_TOKEN` are provided, the backend will use Cloudflare D1 via the Cloudflare D1 query API. Otherwise it falls back to PostgreSQL using `DATABASE_URL`.
