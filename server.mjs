@@ -5,21 +5,14 @@ import express from "express";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import pg from "pg";
 import { fileURLToPath } from "node:url";
+import { getClient, isD1, query } from "./db.mjs";
 
-const { Pool } = pg;
 const app = express();
 const port = Number(process.env.BACKEND_PORT || 4000);
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:9002";
 const backendDir = dirname(fileURLToPath(import.meta.url));
 const uploadsDir = join(backendDir, "uploads");
-
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not set for backend service.");
-}
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 app.use(cors({ origin: frontendOrigin, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
@@ -46,6 +39,22 @@ function mapUser(row) {
   };
 }
 
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function normalizeBoolean(value) {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
 function mapEpisode(row) {
   return {
     id: row.id,
@@ -62,12 +71,12 @@ function mapVideo(row, episodes = []) {
     type: row.type === "SERIES" ? "series" : "movie",
     title: row.title,
     description: row.description,
-    genres: row.genres || [],
-    tags: row.tags || [],
+    genres: parseJsonArray(row.genres),
+    tags: parseJsonArray(row.tags),
     thumbnailUrl: row.thumbnailUrl,
     videoUrl: row.videoUrl || undefined,
-    isFree: row.isFree,
-    createdAt: new Date(row.createdAt).toISOString(),
+    isFree: normalizeBoolean(row.isFree),
+    createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
     episodes: episodes.length > 0 ? episodes.map(mapEpisode) : undefined,
   };
 }
@@ -95,7 +104,7 @@ function validateCredentials(email, password) {
 }
 
 async function fetchEpisodes(videoId) {
-  const result = await pool.query(
+  const result = await query(
     'SELECT "id", "title", "description", "videoUrl", "order" FROM "Episode" WHERE "videoId" = $1 ORDER BY "order" ASC',
     [videoId],
   );
@@ -103,7 +112,7 @@ async function fetchEpisodes(videoId) {
 }
 
 async function fetchVideoById(videoId) {
-  const result = await pool.query('SELECT * FROM "Video" WHERE "id" = $1', [videoId]);
+  const result = await query('SELECT * FROM "Video" WHERE "id" = $1', [videoId]);
   if (result.rowCount === 0) return null;
   const episodes = await fetchEpisodes(videoId);
   return mapVideo(result.rows[0], episodes);
@@ -111,7 +120,7 @@ async function fetchVideoById(videoId) {
 
 app.get("/health", async (_req, res) => {
   try {
-    await pool.query("SELECT 1");
+    await query("SELECT 1");
     res.json({ ok: true, port, frontendOrigin });
   } catch (error) {
     res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" });
@@ -126,14 +135,14 @@ app.post("/api/auth/signup", async (req, res) => {
   const normalizedEmail = String(email).trim().toLowerCase();
 
   try {
-    const existing = await pool.query('SELECT "id" FROM "User" WHERE "email" = $1', [normalizedEmail]);
+    const existing = await query('SELECT "id" FROM "User" WHERE "email" = $1', [normalizedEmail]);
     if (existing.rowCount > 0) {
       return res.status(409).json({ error: "An account with this email already exists." });
     }
 
-    const insert = await pool.query(
+    const insert = await query(
       `INSERT INTO "User" ("id", "email", "passwordHash", "role", "isSubscribed", "subscriptionStatus", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'USER', false, 'NONE', NOW(), NOW())
+       VALUES ($1, $2, $3, 'USER', false, 'NONE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        RETURNING "id", "email", "role", "isSubscribed"`,
       [randomUUID(), normalizedEmail, hashPassword(password)],
     );
@@ -150,7 +159,7 @@ app.post("/api/auth/login", async (req, res) => {
   if (validationError) return res.status(400).json({ error: validationError });
 
   try {
-    const result = await pool.query(
+    const result = await query(
       'SELECT "id", "email", "passwordHash", "role", "isSubscribed" FROM "User" WHERE "email" = $1',
       [String(email).trim().toLowerCase()],
     );
@@ -168,7 +177,7 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.get("/api/users/:id", async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await query(
       'SELECT "id", "email", "role", "isSubscribed" FROM "User" WHERE "id" = $1',
       [req.params.id],
     );
@@ -185,27 +194,27 @@ app.get("/api/users/:id", async (req, res) => {
 
 app.post("/api/users/:id/subscription/toggle", async (req, res) => {
   try {
-    const current = await pool.query('SELECT "isSubscribed" FROM "User" WHERE "id" = $1', [req.params.id]);
+    const current = await query('SELECT "isSubscribed" FROM "User" WHERE "id" = $1', [req.params.id]);
     if (current.rowCount === 0) {
       return res.status(404).json({ error: "User not found." });
     }
 
     const nextIsSubscribed = !current.rows[0].isSubscribed;
 
-    const update = await pool.query(
+    const update = await query(
       `UPDATE "User"
        SET "isSubscribed" = $2,
            "subscriptionStatus" = $3,
-           "updatedAt" = NOW()
+           "updatedAt" = CURRENT_TIMESTAMP
        WHERE "id" = $1
        RETURNING "id", "email", "role", "isSubscribed"`,
       [req.params.id, nextIsSubscribed, nextIsSubscribed ? "ACTIVE" : "NONE"],
     );
 
     if (nextIsSubscribed) {
-      await pool.query(
+      await query(
         `INSERT INTO "Subscription" ("id", "planName", "status", "startedAt", "createdAt", "updatedAt", "userId")
-         VALUES ($1, 'Ultra Premium', 'ACTIVE', NOW(), NOW(), NOW(), $2)`,
+         VALUES ($1, 'Ultra Premium', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $2)`,
         [randomUUID(), req.params.id],
       );
     }
@@ -218,8 +227,8 @@ app.post("/api/users/:id/subscription/toggle", async (req, res) => {
 
 app.get("/api/videos", async (_req, res) => {
   try {
-    const videos = await pool.query('SELECT * FROM "Video" ORDER BY "createdAt" DESC');
-    const episodes = await pool.query('SELECT "id", "title", "description", "videoUrl", "order", "videoId" FROM "Episode" ORDER BY "order" ASC');
+    const videos = await query('SELECT * FROM "Video" ORDER BY "createdAt" DESC');
+    const episodes = await query('SELECT "id", "title", "description", "videoUrl", "order", "videoId" FROM "Episode" ORDER BY "order" ASC');
     const episodesByVideoId = new Map();
 
     for (const episode of episodes.rows) {
@@ -253,16 +262,18 @@ app.post("/api/videos", async (req, res) => {
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
   if (!title || !description || !thumbnailUrl || !type) return res.status(400).json({ error: "Missing required fields." });
 
-  const client = await pool.connect();
+  const client = await getClient();
   try {
-    await client.query("BEGIN");
+    if (!isD1()) {
+      await client.query("BEGIN");
+    }
 
     const insertedVideo = await client.query(
       `INSERT INTO "Video" (
         "id", "title", "description", "genres", "tags", "thumbnailUrl", "videoUrl", "type", "isFree", "createdAt", "updatedAt", "uploadedById"
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $10)
       RETURNING *`,
-      [randomUUID(), title, description, genres || [], tags || [], thumbnailUrl, videoUrl || null, String(type).toUpperCase(), Boolean(isFree), userId],
+      [randomUUID(), title, description, JSON.stringify(genres || []), JSON.stringify(tags || []), thumbnailUrl, videoUrl || null, String(type).toUpperCase(), Boolean(isFree), userId],
     );
 
     const video = insertedVideo.rows[0];
@@ -272,7 +283,7 @@ app.post("/api/videos", async (req, res) => {
       for (const episode of episodes) {
         const insertedEpisode = await client.query(
           `INSERT INTO "Episode" ("id", "title", "description", "videoUrl", "order", "createdAt", "updatedAt", "videoId")
-           VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+           VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $6)
            RETURNING "id", "title", "description", "videoUrl", "order"`,
           [randomUUID(), episode.title, episode.description, episode.videoUrl, episode.order, video.id],
         );
@@ -280,13 +291,17 @@ app.post("/api/videos", async (req, res) => {
       }
     }
 
-    await client.query("COMMIT");
+    if (!isD1()) {
+      await client.query("COMMIT");
+    }
     return res.status(201).json({ video: mapVideo(video, createdEpisodes) });
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (!isD1()) {
+      await client.query("ROLLBACK");
+    }
     return res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create video." });
   } finally {
-    client.release();
+    await client.release();
   }
 });
 
@@ -328,7 +343,7 @@ app.delete("/api/videos/:id", async (req, res) => {
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    await pool.query('DELETE FROM "Video" WHERE "id" = $1', [req.params.id]);
+    await query('DELETE FROM "Video" WHERE "id" = $1', [req.params.id]);
     return res.status(204).send();
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete video." });

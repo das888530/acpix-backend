@@ -1,10 +1,7 @@
 import "dotenv/config";
 
 import { randomBytes, scryptSync } from "node:crypto";
-
-import pg from "pg";
-
-const { Client } = pg;
+import { query } from "./db.mjs";
 
 const ADMIN_EMAIL = "admin@streamvault.com";
 const ADMIN_PASSWORD = "Admin@123";
@@ -20,60 +17,44 @@ function createId() {
 }
 
 async function ensureAdmin() {
-  const connectionString = process.env.DATABASE_URL;
+  const passwordHash = hashPassword(ADMIN_PASSWORD);
 
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is not set.");
-  }
+  const result = await query(
+    `
+      INSERT INTO "User" (
+        "id",
+        "email",
+        "passwordHash",
+        "role",
+        "isSubscribed",
+        "subscriptionStatus",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        'ADMIN',
+        true,
+        'ACTIVE',
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT ("email")
+      DO UPDATE SET
+        "passwordHash" = EXCLUDED."passwordHash",
+        "role" = 'ADMIN',
+        "isSubscribed" = true,
+        "subscriptionStatus" = 'ACTIVE',
+        "updatedAt" = CURRENT_TIMESTAMP
+      RETURNING "id", "email", "role";
+    `,
+    [createId(), ADMIN_EMAIL, passwordHash],
+  );
 
-  const client = new Client({
-    connectionString,
-  });
-
-  await client.connect();
-
-  try {
-    const passwordHash = hashPassword(ADMIN_PASSWORD);
-
-    const result = await client.query(
-      `
-        INSERT INTO "User" (
-          "id",
-          "email",
-          "passwordHash",
-          "role",
-          "isSubscribed",
-          "subscriptionStatus",
-          "createdAt",
-          "updatedAt"
-        )
-        VALUES (
-          $1,
-          $2,
-          $3,
-          'ADMIN',
-          true,
-          'ACTIVE',
-          NOW(),
-          NOW()
-        )
-        ON CONFLICT ("email")
-        DO UPDATE SET
-          "passwordHash" = EXCLUDED."passwordHash",
-          "role" = 'ADMIN',
-          "isSubscribed" = true,
-          "subscriptionStatus" = 'ACTIVE',
-          "updatedAt" = NOW()
-        RETURNING "id", "email", "role";
-      `,
-      [createId(), ADMIN_EMAIL, passwordHash],
-    );
-
-    const row = result.rows[0];
-    console.log(`Admin ready: ${row.email} (${row.role})`);
-  } finally {
-    await client.end();
-  }
+  const row = result.rows[0];
+  console.log(`Admin ready: ${row.email} (${row.role})`);
 }
 
 ensureAdmin().catch((error) => {
